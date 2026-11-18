@@ -71,11 +71,11 @@ Create a `.wtrconfig` file in your repository root to share configuration across
 > [!IMPORTANT]
 > Hooks and editor/AI defaults from `.wtrconfig` are executable command entries. They are ignored until you review them with `git wtr trust`; changing those entries requires re-approval.
 
-Approval is bound to the repository path and the filesystem identity of its common Git directory. A replacement or fresh clone at the same path needs new approval, as do approvals created by older versions that only used the path. Normal commits and linked worktrees retain approval. This is command-definition trust: scripts, dependencies, and tools invoked by approved commands are not hashed or pinned, so their contents can change within the trusted repository. Review delegated code and trust its contributors before approving.
+Approval is bound to the repository path, the filesystem identity of both Git directories (the worktree-specific Git directory and the common Git directory), and the HEAD commit that was reviewed. Approval is per worktree: trusting commands in one worktree does not authorize them in another worktree of the same repository, so run `git wtr trust` inside each worktree that should execute `.wtrconfig` commands. A replacement or fresh clone at the same path needs new approval, as do approvals created by older versions that only used the path. Approval also stays valid only while HEAD is the reviewed commit or a descendant, proven against raw commit objects with replace refs, grafts, lazy fetching and the commit-graph disabled — history rewrites, force-pushes and unrelated histories require re-approval, while normal descendant commits retain it. This is command-definition trust: scripts, dependencies, and tools invoked by approved commands are not hashed or pinned, so their contents can change within the trusted repository. Review delegated code and trust its contributors before approving.
 
-Command definitions are captured once for trust verification and consumption, with NUL-delimited records preserving multiline values. The version 3 trust format invalidates older approvals; review commands again with `git wtr trust` after upgrading.
+Command definitions are captured once for trust verification and consumption, with NUL-delimited records preserving multiline values. The version 4 trust format invalidates older approvals; review commands again with `git wtr trust` after upgrading.
 
-The identity includes device, inode, and birth time with nanosecond precision. If the filesystem or `stat` implementation cannot provide a known birth time, approval fails closed and `.wtrconfig` executable commands remain disabled.
+The identity includes device, inode, and birth time with nanosecond precision for each Git directory. If the filesystem or `stat` implementation cannot provide a known birth time, approval fails closed and `.wtrconfig` executable commands remain disabled.
 
 ---
 
