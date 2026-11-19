@@ -205,6 +205,25 @@ EOF
   done
 }
 
+@test "replacing the object database while preserving git cannot reuse approval" {
+  git config -f "$TEST_REPO/.wtrconfig" hooks.postCd 'echo harmless'
+  _hooks_mark_trusted "$TEST_REPO/.wtrconfig"
+
+  local objects="$TEST_REPO/.git/objects"
+  local replacement="$TEST_REPO/.git/objects.replacement"
+  mv "$objects" "$replacement"
+  mkdir -p "$objects"
+
+  # Preserve the commit objects needed for a raw ancestry check.  The approval
+  # must still fail because the object database directory itself was replaced.
+  cp -R "$replacement/"* "$objects/" 2>/dev/null || true
+  ! _hooks_are_trusted "$TEST_REPO/.wtrconfig"
+
+  rm -rf "$objects"
+  mv "$replacement" "$objects"
+  _hooks_are_trusted "$TEST_REPO/.wtrconfig"
+}
+
 @test "unknown or unavailable Git directory birth times fail closed" {
   git config -f "$TEST_REPO/.wtrconfig" hooks.postCd 'echo harmless'
   stat() { printf '%s\n' "$fixture_stat"; }
@@ -574,17 +593,17 @@ EOF
   ! _hooks_are_trusted "$TEST_REPO/.wtrconfig"
 }
 
-@test "v3-format trust keys are invalidated by the v4 format" {
+@test "v4-format trust keys are invalidated by the v5 format" {
   git config -f "$TEST_REPO/.wtrconfig" hooks.postCd 'echo harmless'
-  local hook_content repo_root repo_identity v3_key
+  local hook_content repo_root repo_identity v4_key
   hook_content=$(_hooks_read_definitions "$TEST_REPO/.wtrconfig")
   repo_root=$(_hooks_repo_root "$TEST_REPO/.wtrconfig")
   repo_identity=$(_hooks_repo_identity "$TEST_REPO")
-  v3_key=$(printf 'v3\n%s\n%s\n%s\n' "$repo_root" "$repo_identity" \
+  v4_key=$(printf 'v4\n%s\n%s\n%s\n' "$repo_root" "$repo_identity" \
     "$(_hooks_content_hash "$hook_content")" | shasum -a 256 | cut -d' ' -f1)
   mkdir -p "$_WTR_TRUST_DIR"
   printf '%s\n%s\n' "$TEST_REPO/.wtrconfig" "$(_hooks_head_commit "$TEST_REPO")" \
-    > "$_WTR_TRUST_DIR/$v3_key"
+    > "$_WTR_TRUST_DIR/$v4_key"
   ! _hooks_are_trusted "$TEST_REPO/.wtrconfig"
 }
 
@@ -606,4 +625,33 @@ EOF
   git init --bare --quiet "$bare"
   ! _hooks_head_commit "$bare"
   ! (cd "$bare" && _hooks_mark_trusted "$TEST_REPO/.wtrconfig")
+}
+
+# ── Trust approval history ────────────────────────────────────────────────
+
+@test "approving commands appends an audit record to the trust history" {
+  git config -f "$TEST_REPO/.wtrconfig" hooks.postCd 'echo harmless'
+  local reviewed trust_key history
+  reviewed=$(_hooks_head_commit "$TEST_REPO")
+  trust_key=$(_hooks_reviewed_trust_key "$TEST_REPO/.wtrconfig" "$(_hooks_read_definitions "$TEST_REPO/.wtrconfig")")
+  _hooks_mark_trusted "$TEST_REPO/.wtrconfig"
+
+  history="$_WTR_TRUST_DIR/history.log"
+  [ -f "$history" ]
+  local record
+  record=$(tail -1 "$history")
+  [[ "$record" == *"$TEST_REPO"* ]]
+  [[ "$record" == *"$reviewed"* ]]
+  [[ "$record" == *"$trust_key"* ]]
+}
+
+@test "history logging is best-effort and never blocks approval" {
+  git config -f "$TEST_REPO/.wtrconfig" hooks.postCd 'echo harmless'
+  # Make the history file unwritable; approval must still succeed.
+  mkdir -p "$_WTR_TRUST_DIR"
+  printf 'blocked\n' > "$_WTR_TRUST_DIR/history.log"
+  chmod 0444 "$_WTR_TRUST_DIR/history.log"
+  _hooks_mark_trusted "$TEST_REPO/.wtrconfig" || true
+  chmod 0644 "$_WTR_TRUST_DIR/history.log" 2>/dev/null || true
+  _hooks_are_trusted "$TEST_REPO/.wtrconfig"
 }

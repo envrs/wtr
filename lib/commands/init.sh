@@ -193,14 +193,17 @@ __SHELL_PRELUDE__
 __FUNC___hooks_repo_identity() {
 __SHELL_PRELUDE__
   local _wtr_context_dir="$1"
-  local _wtr_worktree_dir _wtr_common_dir _wtr_wt_identity _wtr_common_identity
+  local _wtr_worktree_dir _wtr_common_dir _wtr_objects_dir _wtr_wt_identity _wtr_common_identity _wtr_objects_identity
   _wtr_worktree_dir="$(git -C "$_wtr_context_dir" rev-parse --git-dir 2>/dev/null)" || return 1
   _wtr_common_dir="$(git -C "$_wtr_context_dir" rev-parse --git-common-dir 2>/dev/null)" || return 1
+  _wtr_objects_dir="$(git -C "$_wtr_context_dir" rev-parse --git-path objects 2>/dev/null)" || return 1
   _wtr_worktree_dir="$(cd "$_wtr_context_dir" && cd "$_wtr_worktree_dir" && pwd -P)" || return 1
   _wtr_common_dir="$(cd "$_wtr_context_dir" && cd "$_wtr_common_dir" && pwd -P)" || return 1
+  _wtr_objects_dir="$(cd "$_wtr_context_dir" && cd "$_wtr_objects_dir" && pwd -P)" || return 1
   _wtr_wt_identity="$(__FUNC___hooks_dir_birth_identity "$_wtr_worktree_dir" 2>/dev/null)" || return 1
   _wtr_common_identity="$(__FUNC___hooks_dir_birth_identity "$_wtr_common_dir" 2>/dev/null)" || return 1
-  printf '%s\n%s\n%s\n%s\n' "$_wtr_worktree_dir" "$_wtr_wt_identity" "$_wtr_common_dir" "$_wtr_common_identity"
+  _wtr_objects_identity="$(__FUNC___hooks_dir_birth_identity "$_wtr_objects_dir" 2>/dev/null)" || return 1
+  printf '%s\n%s\n%s\n%s\n%s\n%s\n' "$_wtr_worktree_dir" "$_wtr_wt_identity" "$_wtr_common_dir" "$_wtr_common_identity" "$_wtr_objects_dir" "$_wtr_objects_identity"
 }
 
 __FUNC___hooks_head_descends_from() {
@@ -225,7 +228,7 @@ __SHELL_PRELUDE__
   _wtr_hook_hash="$(__FUNC___hooks_current_content_hash "$_wtr_config_file" "$_wtr_definitions" 2>/dev/null)" || return 1
   _wtr_repo_root="$(__FUNC___hooks_repo_root "$_wtr_config_file" 2>/dev/null)" || return 1
   _wtr_repo_identity="$(__FUNC___hooks_repo_identity "$(pwd -P)" 2>/dev/null)" || return 1
-  printf 'v4\n%s\n%s\n%s\n' "$_wtr_repo_root" "$_wtr_repo_identity" "$_wtr_hook_hash" | shasum -a 256 | cut -d' ' -f1
+  printf 'v5\n%s\n%s\n%s\n' "$_wtr_repo_root" "$_wtr_repo_identity" "$_wtr_hook_hash" | shasum -a 256 | cut -d' ' -f1
 }
 
 __FUNC___hooks_marker_matches_config() {
@@ -317,15 +320,18 @@ end
 function __FUNC___hooks_repo_identity
   set -l _wtr_worktree_dir (git -C "$argv[1]" rev-parse --git-dir 2>/dev/null)
   set -l _wtr_common_dir (git -C "$argv[1]" rev-parse --git-common-dir 2>/dev/null)
-  test -n "$_wtr_worktree_dir"; and test -n "$_wtr_common_dir"; or return 1
+  set -l _wtr_objects_dir (git -C "$argv[1]" rev-parse --git-path objects 2>/dev/null)
+  test -n "$_wtr_worktree_dir"; and test -n "$_wtr_common_dir"; and test -n "$_wtr_objects_dir"; or return 1
   set -l _wtr_wt_dir (cd "$argv[1]" && cd "$_wtr_worktree_dir" && pwd -P)
   set -l _wtr_common_dir_canon (cd "$argv[1]" && cd "$_wtr_common_dir" && pwd -P)
-  test -n "$_wtr_wt_dir"; and test -n "$_wtr_common_dir_canon"; or return 1
+  set -l _wtr_objects_dir_canon (cd "$argv[1]" && cd "$_wtr_objects_dir" && pwd -P)
+  test -n "$_wtr_wt_dir"; and test -n "$_wtr_common_dir_canon"; and test -n "$_wtr_objects_dir_canon"; or return 1
   set -l _wtr_wt_identity (__FUNC___hooks_dir_birth_identity "$_wtr_wt_dir" 2>/dev/null | string collect)
   set -l _wtr_common_identity (__FUNC___hooks_dir_birth_identity "$_wtr_common_dir_canon" 2>/dev/null | string collect)
-  test $pipestatus[1] -eq 0; and test $pipestatus[2] -eq 0; or return 1
-  test -n "$_wtr_wt_identity"; and test -n "$_wtr_common_identity"; or return 1
-  printf '%s\n%s\n%s\n%s\n' "$_wtr_wt_dir" "$_wtr_wt_identity" "$_wtr_common_dir_canon" "$_wtr_common_identity"
+  set -l _wtr_objects_identity (__FUNC___hooks_dir_birth_identity "$_wtr_objects_dir_canon" 2>/dev/null | string collect)
+  test $pipestatus[1] -eq 0; and test $pipestatus[2] -eq 0; and test $pipestatus[3] -eq 0; or return 1
+  test -n "$_wtr_wt_identity"; and test -n "$_wtr_common_identity"; and test -n "$_wtr_objects_identity"; or return 1
+  printf '%s\n%s\n%s\n%s\n%s\n%s\n' "$_wtr_wt_dir" "$_wtr_wt_identity" "$_wtr_common_dir_canon" "$_wtr_common_identity" "$_wtr_objects_dir_canon" "$_wtr_objects_identity"
 end
 
 function __FUNC___hooks_head_descends_from
@@ -351,7 +357,7 @@ function __FUNC___hooks_current_trust_key
   set -l _wtr_repo_identity (__FUNC___hooks_repo_identity (pwd -P) 2>/dev/null | string collect)
   test $pipestatus[1] -eq 0; or return 1
   test -n "$_wtr_repo_identity"; or return 1
-  printf 'v4\n%s\n%s\n%s\n' "$_wtr_repo_root" "$_wtr_repo_identity" "$_wtr_hook_hash" | shasum -a 256 | cut -d' ' -f1
+  printf 'v5\n%s\n%s\n%s\n' "$_wtr_repo_root" "$_wtr_repo_identity" "$_wtr_hook_hash" | shasum -a 256 | cut -d' ' -f1
 end
 
 function __FUNC___hooks_marker_matches_config

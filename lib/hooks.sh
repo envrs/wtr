@@ -9,7 +9,7 @@
 #
 # Trust state is stored in ~/.config/wtr/trusted/<key>
 # where <key> binds the canonical repo root, the executing worktree's Git
-# directory identities (worktree-specific and common) and trusted content hash.
+# directory identities (worktree-specific, common and object database) and trusted content hash.
 # The marker also records the reviewed HEAD commit; approval stays valid only
 # while the current HEAD is that commit or a descendant, so history rewrites,
 # replaced repositories and swapped Git directories require new approval.
@@ -119,14 +119,17 @@ _hooks_dir_birth_identity() {
 # <dir> may be any directory inside the target worktree.
 _hooks_repo_identity() {
   local context_dir="$1"
-  local worktree_dir common_dir wt_identity common_identity
+  local worktree_dir common_dir objects_dir wt_identity common_identity objects_identity
   worktree_dir=$(git -C "$context_dir" rev-parse --git-dir 2>/dev/null) || return 1
   common_dir=$(git -C "$context_dir" rev-parse --git-common-dir 2>/dev/null) || return 1
+  objects_dir=$(git -C "$context_dir" rev-parse --git-path objects 2>/dev/null) || return 1
   worktree_dir=$(cd "$context_dir" && cd "$worktree_dir" && pwd -P) || return 1
   common_dir=$(cd "$context_dir" && cd "$common_dir" && pwd -P) || return 1
+  objects_dir=$(cd "$context_dir" && cd "$objects_dir" && pwd -P) || return 1
   wt_identity=$(_hooks_dir_birth_identity "$worktree_dir") || return 1
   common_identity=$(_hooks_dir_birth_identity "$common_dir") || return 1
-  printf '%s\n%s\n%s\n%s\n' "$worktree_dir" "$wt_identity" "$common_dir" "$common_identity"
+  objects_identity=$(_hooks_dir_birth_identity "$objects_dir") || return 1
+  printf '%s\n%s\n%s\n%s\n%s\n%s\n' "$worktree_dir" "$wt_identity" "$common_dir" "$common_identity" "$objects_dir" "$objects_identity"
 }
 
 # Print the full commit SHA that HEAD points to in the repo containing <dir>.
@@ -175,7 +178,7 @@ _hooks_reviewed_trust_key() {
   if [ -z "$repo_identity" ]; then
     repo_identity=$(_hooks_repo_identity "$(pwd -P)") || return 1
   fi
-  printf 'v4\n%s\n%s\n%s\n' "$repo_root" "$repo_identity" "$hash" | shasum -a 256 | cut -d' ' -f1
+  printf 'v5\n%s\n%s\n%s\n' "$repo_root" "$repo_identity" "$hash" | shasum -a 256 | cut -d' ' -f1
 }
 
 # Compute the repo-scoped trust key for the current trusted command content
@@ -251,6 +254,22 @@ _hooks_are_trusted() {
   _hooks_snapshot_is_trusted "$config_file" "$hook_content"
 }
 
+# Append an audit record for a successful approval. History is best-effort:
+# a logging failure must never affect the trust decision itself.
+# Usage: _hooks_record_trust_history <config_file> <reviewed_commit> <trust_key>
+_hooks_record_trust_history() {
+  local config_file="$1" reviewed_commit="$2" trust_key="$3"
+  local repo_root worktree_dir timestamp
+  repo_root=$(_hooks_repo_root "$config_file") || repo_root=""
+  worktree_dir=$(git -C "$(pwd -P)" rev-parse --git-dir 2>/dev/null) || worktree_dir=""
+  if [ -n "$worktree_dir" ]; then
+    worktree_dir=$(cd "$(pwd -P)" && cd "$worktree_dir" && pwd -P 2>/dev/null) || worktree_dir=""
+  fi
+  timestamp=$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null) || timestamp=""
+  printf '%s\t%s\t%s\t%s\t%s\n' "$timestamp" "$repo_root" "$worktree_dir" "$reviewed_commit" "$trust_key" \
+    >> "$_WTR_TRUST_DIR/history.log" 2>/dev/null || true
+}
+
 # Write a trust marker binding the reviewed definitions to the canonical
 # config path and the HEAD commit that was reviewed.
 # Usage: _hooks_write_trust_marker <trust_path> <config_file> <reviewed_commit>
@@ -278,6 +297,7 @@ _hooks_write_trust_marker() {
     rm -f "$temp_path"
     return 1
   fi
+  _hooks_record_trust_history "$config_file" "$reviewed_commit" "$(basename "$trust_path")"
 }
 
 # Mark .wtrconfig command definitions as trusted for the current worktree,
